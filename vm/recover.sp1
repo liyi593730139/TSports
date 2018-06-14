@@ -1,0 +1,146 @@
+#修改了恢复功能业务流程：
+#不使用VersionIdentifier标签表示要恢复的标识符
+#将该值作为恢复文件的第四个输入参数。
+#删除服务器配置文件检验功能。
+
+
+#To Do
+#是否需要在共享目录中进行进一步新建目录及目录区分
+
+
+#显示开始日期和时间
+$starttime = date
+echo "开始日期和时间"
+echo $starttime
+
+
+#运行环境检测：hypev-v,windows-server-backup
+Import-Module ServerManager
+
+$hypervinfo = Get-WindowsFeature hyper-v
+if ( !($hypervinfo.installed) ) {
+	echo "ERROR:服务器未添加Hyper-V角色服务，停止运行"
+	exit
+}
+
+$wbadmininfo = Get-WindowsFeature windows-server-backup
+if ( !($wbadmininfo.installed) ) {
+	echo "ERROR:服务器未添加Windows Server Backup功能，停止运行"
+	exit
+}
+
+
+#校验参数个数，当参数个数不等于3时，程序停止运行。
+if ($($args[3]) -eq $null) {
+	echo "ERROR:程序参数个数少于4个，停止运行。"
+	exit
+}
+if ($($args[4]) -ne $null) {
+	echo "ERROR:程序参数个数大于4个，停止运行"
+	exit
+}
+
+
+#取第1个参数：虚拟机名称
+#$name = "test1"
+$name = $($args[0])
+echo $name
+
+
+#服务器工作目录
+#$targetshare = "\\219.223.196.180\share\hyperv\"
+$targetshare = $($args[1])
+if( $targetshare.toCharArray().length -gt 100) {
+	echo "ERROR:服务器工作目录名称字符过长"
+	exit
+}
+if( $targetshare.split(" ").length -gt 1 ) {
+	echo "ERROR:服务器工作目录中存在空格，发生错误。"
+	exit
+}
+#对读取到的目录进行处理，保证以字符串以“\”结束
+if(!($targetshare.EndsWith("\"))) {
+	$targetshare = $targetshare + "\"
+}
+echo $targetshare
+#check exist
+if( !(Test-Path $targetshare) ) {
+	echo "ERROR:服务器工作目录不存在"
+	exit
+} else {
+	echo "存在服务器工作目录"
+}
+
+
+#本地工作目录
+#$scriptpath = "C:\Users\Administrator\Desktop\HypervBackup2.1\"
+$scriptpath = $($args[2])
+if( $scriptpath.toCharArray().length -gt 200) {
+	echo "ERROR:本地工作目录名称字符过长"
+	exit
+}
+#对读取到的目录进行处理，保证以字符串以“\”结束
+if( !($scriptpath.EndsWith("\")) ) {
+	$scriptpath = $scriptpath + "\"
+}
+echo $scriptpath
+#check exist
+if( !(Test-Path $scriptpath) ) {
+	echo "ERROR:本地工作目录不存在"
+	exit
+} else {
+	echo "存在本地工作目录"
+}
+
+
+#本地配置文件
+$confname = "backupconf.xml"
+$backupconf = $scriptpath + $confname
+echo $backupconf
+#check exist
+if( !(Test-Path $backupconf) ) {
+	echo "ERROR:本地配置文件不存在"
+	exit
+} else {
+	echo "存在本地配置文件"
+}
+
+
+#本地版本信息文件
+$versionpath = $scriptpath
+$versionfilename = "backupversion.txt"
+$filepath = $versionpath + $versionfilename
+echo $filepath
+
+
+#参数4:VersionIdentifier值
+$versionID = $($args[3])
+
+
+function VMRecover() {
+
+	echo "开始恢复"
+	[string]$backupinfo = wbadmin start recovery -version:$versionID -backupTarget:$targetshare "-items:$name" -itemtype:hyperv -quiet
+
+	$success = 0
+	$flag = "恢复操作完成"
+	$backupinfoarray = $backupinfo.Split(" ")
+	$blen = $backupinfoarray.count
+	for([int]$i=0; $i -lt $blen; $i++) {
+		if( $backupinfoarray[$i].contains($flag) ) {
+			$success = 1
+		}
+	}
+	if($success -eq 0) {
+		echo "ERROR:$backupinfo"
+		exit
+	}
+
+	$endtime = date
+	echo "结束日期和时间"
+	echo $endtime
+
+}
+
+#main
+	VMRecover

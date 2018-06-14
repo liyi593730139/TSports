@@ -1,0 +1,180 @@
+#显示开始日期和时间
+$starttime = date
+echo "开始日期和时间"
+echo $starttime
+
+
+#运行环境检测：hypev-v,windows-server-backup
+Import-Module ServerManager
+
+$hypervinfo = Get-WindowsFeature hyper-v
+if ( !($hypervinfo.installed) ) {
+	echo "ERROR:SCD-09009.LEVEL:4.服务器未添加Hyper-V角色服务，停止运行."
+	exit
+}
+
+$wbadmininfo = Get-WindowsFeature windows-server-backup
+if ( !($wbadmininfo.installed) ) {
+	echo "ERROR:SCD-09010.LEVEL:4.服务器未添加Windows Server Backup功能，停止运行"
+	exit
+}
+
+
+#校验参数个数，当参数个数不等于3时，程序停止运行。
+if ($($args[2]) -eq $null) {
+	echo "ERROR:SCD-09011.LEVEL:4.程序参数个数少于3个，停止运行。"
+	exit
+}
+if ($($args[3]) -ne $null) {
+	echo "ERROR:SCD-09012.LEVEL:4.程序参数个数大于3个，停止运行"
+	exit
+}
+
+
+#取第1个参数：虚拟机名称
+#$name = "test1"
+$name = $($args[0])
+echo $name
+
+
+#服务器工作目录
+#$targetshare = "\\219.223.196.180\share\hyperv\"
+$targetshare = $($args[1])
+if( $targetshare.toCharArray().length -gt 100) {
+	echo "ERROR:SCD-09001.LEVEL:4.服务器工作目录名称字符过长"
+	exit
+}
+if( $targetshare.split(" ").length -gt 1 ) {
+	echo "ERROR:SCD-09002.LEVEL:4.服务器工作目录中存在空格，发生错误。"
+	exit
+}
+#对读取到的目录进行处理，保证以字符串以“\”结束
+if(!($targetshare.EndsWith("\"))) {
+	$targetshare = $targetshare + "\"
+}
+echo $targetshare
+#check exist
+if( !(Test-Path $targetshare) ) {
+	echo "ERROR:SCD-09003.LEVEL:4.服务器工作目录不存在"
+	exit
+} else {
+	echo "存在服务器工作目录"
+}
+
+
+#本地工作目录
+#$scriptpath = "C:\Users\Administrator\Desktop\HypervBackup2.1\"
+$scriptpath = $($args[2])
+if( $scriptpath.toCharArray().length -gt 200) {
+	echo "ERROR:SCD-09004.LEVEL:4.本地工作目录名称字符过长"
+	exit
+}
+#对读取到的目录进行处理，保证以字符串以“\”结束
+if( !($scriptpath.EndsWith("\")) ) {
+	$scriptpath = $scriptpath + "\"
+}
+echo $scriptpath
+#check exist
+if( !(Test-Path $scriptpath) ) {
+	echo "ERROR:SCD-09005.LEVEL:4.本地工作目录不存在"
+	exit
+} else {
+	echo "存在本地工作目录"
+}
+
+
+#本地配置文件
+$confname = "backupconf.xml"
+$backupconf = $scriptpath + $confname
+echo $backupconf
+#check exist
+if( !(Test-Path $backupconf) ) {
+	echo "ERROR:SCD-09006.LEVEL:4.本地配置文件不存在"
+	exit
+} else {
+	echo "存在本地配置文件"
+}
+
+
+#本地版本信息文件
+$versionpath = $scriptpath
+$versionfilename = "backupversion.txt"
+$filepath = $versionpath + $versionfilename
+echo $filepath
+
+
+#服务器配置文件
+$sharexmlname = "backupconf.xml"
+$sharexmlpath = $targetshare + $sharexmlname
+echo $sharexmlpath
+#check exist
+if( !(Test-Path $sharexmlpath) ) {
+	echo "ERROR:SCD-09007.LEVEL:4.服务器配置文件不存在"
+	exit
+} else {
+	echo "存在服务器配置文件"
+}
+
+
+function VMBackup {
+
+	echo "开始备份"
+	[string]$backupinfo = wbadmin start backup  -backupTarget:$targetshare "-hyperv:$name" -quiet
+
+	$success = 0
+	$flag = "成功完成备份操作"
+	$backupinfoarray = $backupinfo.Split(" ")
+	$blen = $backupinfoarray.count
+	for([int]$i=0; $i -lt $blen; $i++) {
+		if( $backupinfoarray[$i].contains($flag) ) {
+			$success = 1
+		}
+	}
+	if($success -eq 0) {
+		echo "ERROR:SCD-09015.LEVEL:4.$backupinfo"
+		exit
+	}
+
+
+	wbadmin get versions -backupTarget:$targetshare > $filepath
+
+	#在txt文件流中查询最后一次备份的版本标志
+
+	[string]$content = Get-Content $filepath
+	$stringarray = $content.Split(" ")
+	[string]$versionID = "no backupversion"
+	$len = $stringarray.count
+	for([int]$i=0; $i -lt $len; $i++) {
+		if($stringarray[$i] -eq "版本标识符:") {
+			$versionID = $stringarray[$i+1]
+		}
+	}
+	if ( $versionID -ne "no backupversion" ) {
+	} else {
+		echo "ERROR:SCD-09008.LEVEL:4.查询本次备份版本标识符不存在。"
+		exit
+	}
+
+	$xmldata = [xml](Get-Content $backupconf)
+	$xmldata.backupconf.versionidentifier = $versionID
+	$xmldata.backupconf.name = $name
+
+	#产生当前虚拟机备份任务的临时备份文件：应对多虚拟机备份任务同时进行到该步骤时，
+	#前一个任务配置文件修改完毕后还未传输，被其它任务改掉配置文件内容，然后传输包含被修改信息的文件。
+	$randomnum = get-random 1000000
+	$tempxml = $scriptpath + "backup" + $randomnum + ".xml"
+    cp $backupconf $tempxml
+	$xmldata.Save($tempxml)
+
+	cp $tempxml $sharexmlpath
+
+	rm $tempxml
+
+	$endtime = date
+	echo "结束日期和时间"
+	echo $endtime
+
+}
+
+#main
+	VMBackup
